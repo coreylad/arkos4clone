@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# ==================== 日志配置 ====================
+# ==================== Logging configuration ====================
 LOG_FILE="/boot/boot.log"
 
-# 初始化日志（追加模式）
+# Initialize the log (append mode).
 log() {
   local ts; ts="$(date '+%Y-%m-%d %H:%M:%S')"
   echo "[$ts] $*" | tee -a "$LOG_FILE"
@@ -14,7 +14,7 @@ log "========== expandtoexfat.sh Start =========="
 # Disk holding the root filesystem: mmcblk0 on SD, mmcblk2 on eMMC
 DISK=/dev/$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")
 
-# ==================== Step 1: 卸载 roms ====================
+# ==================== Step 1: Unmount roms ====================
 log "=== Step 1: Unmount /roms ==="
 sudo umount /roms 2>/dev/null && log "Unmounted /roms" || log "/roms not mounted or unmount failed"
 
@@ -33,8 +33,8 @@ if [ -f "/boot/rk3326-rg351v-linux.dtb" ] || [ -f "/boot/rk3326-rg351mp-linux.dt
   width="60"
 fi
 
-# ==================== Step 2: 首次分区扩展 ====================
-# p2 构建时已扩到 11G，首启不再扩容 p2，仅把 p3 扩到盘尾
+# ==================== Step 2: First-boot partition expansion ====================
+# p2 was expanded to 11 GiB during the build; on first boot, only extend p3 to the end of the disk.
 log "=== Step 2: Check partition expansion status ==="
 if [ ! -f /boot/doneit ]; then
   log "First run: expanding partition 3"
@@ -48,7 +48,7 @@ if [ ! -f /boot/doneit ]; then
 fi
 log "Partition already expanded (doneit exists)"
 
-# ==================== Step 3: 重建 p3 (原厂流程；p2 已是 11G 不再扩容) ====================
+# ==================== Step 3: Recreate p3 (stock procedure; p2 is already 11 GiB) ====================
 log "=== Step 3: Recreate partition 3 ==="
 printf "d\n3\nw\n" | sudo fdisk $DISK 2>&1 | tee -a "$LOG_FILE"
 
@@ -57,7 +57,7 @@ exfatstartSector=$(echo print 1+$ext4endSector | perl)
 log "Creating new partition 3 starting at sector $exfatstartSector..."
 printf "n\np\n3\n$exfatstartSector\n\nt\n3\n11\nw\n" | sudo fdisk $DISK 2>&1 | tee -a "$LOG_FILE"
 
-# ==================== Step 4: 格式化 exFAT ====================
+# ==================== Step 4: Format exFAT ====================
 log "=== Step 4: Format exFAT partition ==="
 log "Creating exFAT filesystem on ${DISK}p3..."
 sudo mkfs.exfat -s 16K -n EASYROMS ${DISK}p3 2>&1 | tee -a "$LOG_FILE"
@@ -71,19 +71,19 @@ sync
 log "Setting partition type to exFAT (07)..."
 printf "t\n3\n7\nw\n" | sudo fdisk $DISK 2>&1 | tee -a "$LOG_FILE"
 
-# ==================== Step 5: 挂载 roms ====================
+# ==================== Step 5: Mount roms ====================
 log "=== Step 5: Mount /roms ==="
 sudo mount -t exfat -w ${DISK}p3 /roms 2>&1 | tee -a "$LOG_FILE"
 exitcode=$?
 log "Mount exit code: $exitcode"
 sleep 2
 
-# ==================== Step 6: 解压 roms.tar ====================
+# ==================== Step 6: Extract roms.tar ====================
 log "=== Step 6: Extract roms.tar ==="
 if [ -f /roms.tar ]; then
   log "Extracting /roms.tar to / ..."
-  # --no-same-owner/--no-same-permissions: exFAT 不支持 chown/chmod，
-  # 不加的话每个文件都会报 Operation not permitted；属主由挂载参数 (fstab uid/gid) 决定
+  # --no-same-owner/--no-same-permissions: exFAT does not support chown/chmod;
+  # otherwise every file reports Operation not permitted. Mount options (fstab uid/gid) set ownership.
   sudo tar --warning=no-timestamp --no-same-permissions --no-same-owner -xvf /roms.tar -C / 2>&1 | tee -a "$LOG_FILE"
   rc=${PIPESTATUS[0]}
   if [ "$rc" -eq 0 ]; then
@@ -97,7 +97,7 @@ fi
 sync
 sleep 2
 
-# ==================== Step 7: 配置 fstab ====================
+# ==================== Step 7: Configure fstab ====================
 log "=== Step 7: Configure fstab ==="
 if [ -f /boot/fstab.exfat ]; then
   sudo cp /boot/fstab.exfat /etc/fstab
@@ -110,7 +110,7 @@ sync
 sudo rm -f /boot/doneit*
 log "Removed /boot/doneit marker"
 
-# 删除 roms.tar (非特定设备; 解包失败则保留供诊断与手动重试)
+# Remove roms.tar on supported devices; keep it on extraction failure for diagnosis and manual retry.
 if [ ! -f "/boot/rk3326-rg351v-linux.dtb" ] && [ ! -f "/boot/rk3326-rg351mp-linux.dtb" ]; then
   if [ "$rc" -eq 0 ]; then
     sudo rm -f /roms.tar
@@ -123,7 +123,7 @@ fi
 sudo rm -f /boot/fstab.exfat
 log "Removed /boot/fstab.exfat"
 
-# ==================== Step 8: 调用 clone.sh ====================
+# ==================== Step 8: Run clone.sh ====================
 log "=== Step 8: Run clone.sh ==="
 if [ $exitcode -eq 0 ]; then
   dialog --infobox "The expansion of the EASYROMS partition and conversion to exFAT have been completed. The system will now enter ArkOS Clone adjustment." $height $width 2>&1 > /dev/tty1 | sleep 3

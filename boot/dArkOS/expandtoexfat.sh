@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# ==================== 日志配置 ====================
+# ==================== Logging configuration ====================
 LOG_FILE="/boot/boot.log"
 
-# 初始化日志（追加模式）
+# Initialize the log (append mode).
 log() {
   local ts; ts="$(date '+%Y-%m-%d %H:%M:%S')"
   echo "[$ts] $*" | tee -a "$LOG_FILE"
@@ -14,7 +14,7 @@ log "========== expandtoexfat.sh Start =========="
 # Disk holding the root filesystem: mmcblk0 on SD, mmcblk2 on eMMC
 DISK=/dev/$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")
 
-# ==================== Step 1: 卸载 roms ====================
+# ==================== Step 1: Unmount roms ====================
 log "=== Step 1: Unmount /roms ==="
 sudo umount /roms 2>/dev/null && log "Unmounted /roms" || log "/roms not mounted or unmount failed"
 
@@ -33,8 +33,8 @@ if [ -f "/boot/rk3326-rg351v-linux.dtb" ] || [ -f "/boot/rk3326-rg351mp-linux.dt
   width="60"
 fi
 
-# ==================== Step 2: 首次分区扩展 ====================
-# p2 构建时已扩到 11G，首启不再扩容 p2，仅把 p3 扩到盘尾
+# ==================== Step 2: First-boot partition expansion ====================
+# p2 was expanded to 11 GiB during the build; on first boot, only extend p3 to the end of the disk.
 log "=== Step 2: Check partition expansion status ==="
 if [ ! -f /boot/doneit ]; then
   log "First run: expanding partition 3"
@@ -48,17 +48,17 @@ if [ ! -f /boot/doneit ]; then
 fi
 log "Partition already expanded (doneit exists)"
 
-# ==================== Step 3: 重建 p3 (原厂流程；p2 已是 11G 不再扩容) ====================
+# ==================== Step 3: Recreate p3 (stock procedure; p2 is already 11 GiB) ====================
 log "=== Step 3: Recreate partition 3 ==="
 printf "d\n3\nw\n" | sudo fdisk $DISK 2>&1 | tee -a "$LOG_FILE"
 
 ext4endSector=$(sudo sfdisk -l $DISK | grep "${DISK}p2" | awk '{print $3}')
 exfatstartSector=$(echo print 1+$ext4endSector | perl)
 log "Creating new partition 3 starting at sector $exfatstartSector (type 07)..."
-# 类型必须发 7 (HPFS/NTFS/exFAT)；发 11 会被 fdisk 解释成 Hidden FAT12
+# The partition type must be 7 (HPFS/NTFS/exFAT); 11 is interpreted by fdisk as Hidden FAT12.
 printf "n\np\n3\n$exfatstartSector\n\nt\n3\n7\nw\n" | sudo fdisk $DISK 2>&1 | tee -a "$LOG_FILE"
 
-# ==================== Step 4: 格式化 exFAT ====================
+# ==================== Step 4: Format exFAT ====================
 log "=== Step 4: Format exFAT partition ==="
 log "Creating exFAT filesystem on ${DISK}p3..."
 sudo mkfs.exfat -c 16384 -n EASYROMS ${DISK}p3 2>&1 | tee -a "$LOG_FILE"
@@ -70,7 +70,7 @@ if [ "$mkfs_rc" -ne 0 ]; then
 fi
 if [ "$mkfs_rc" -ne 0 ]; then
   log "ERROR: mkfs.exfat failed twice (rc=$mkfs_rc)"
-  # 直接走 Step 8 失败分支，避免继续 mount 失败
+  # Go directly to the Step 8 failure branch instead of continuing to a mount failure.
   exitcode=1
 else
   sync
@@ -80,7 +80,7 @@ else
   sync
 fi
 
-# ==================== Step 5: 挂载 roms ====================
+# ==================== Step 5: Mount roms ====================
 log "=== Step 5: Mount /roms ==="
 if [ "${exitcode:-0}" -eq 0 ]; then
   sudo mount -t exfat -w ${DISK}p3 /roms 2>&1 | tee -a "$LOG_FILE"
@@ -94,7 +94,7 @@ else
 fi
 sleep 2
 
-# ==================== Step 6: 解压 roms.tar ====================
+# ==================== Step 6: Extract roms.tar ====================
 log "=== Step 6: Extract roms.tar ==="
 if [ "$exitcode" -eq 0 ] && [ -f /roms.tar ]; then
   log "Extracting /roms.tar to /roms (strip top-level roms/, dereference hardlinks) ..."
@@ -119,7 +119,7 @@ fi
 sync
 sleep 2
 
-# ==================== Step 8: 挂载失败处理 (必须放在一切删除性操作之前) ====================
+# ==================== Step 8: Handle mount failure (must precede all destructive operations) ====================
 if [ "$exitcode" -ne 0 ]; then
   fails="$(cat /boot/.exfat_fails 2>/dev/null || echo 0)"
   fails=$((fails + 1))
@@ -148,7 +148,7 @@ if [ "$exitcode" -ne 0 ]; then
   reboot
 fi
 
-# ==================== Step 9: 配置 fstab ====================
+# ==================== Step 9: Configure fstab ====================
 log "=== Step 9: Configure fstab ==="
 if [ -f /boot/fstab.exfat ]; then
   sudo cp /boot/fstab.exfat /etc/fstab
@@ -162,7 +162,7 @@ sudo rm -f /boot/doneit*
 sudo rm -f /boot/.exfat_fails
 log "Removed /boot/doneit marker"
 
-# 删除 roms.tar (仅解包成功时; 失败保留供诊断与手动重试, 免去重新刷写)
+# Remove roms.tar only after successful extraction; keep it on failure for diagnosis/retry without reflashing.
 if [ "$exitcode" -eq 0 ] && [ "$rc" -eq 0 ]; then
   sudo rm -f /roms.tar
   log "Removed /roms.tar"
@@ -174,7 +174,7 @@ fi
 sudo rm -f /boot/fstab.exfat
 log "Removed /boot/fstab.exfat"
 
-# ==================== Step 10: 调用 clone.sh ====================
+# ==================== Step 10: Run clone.sh ====================
 log "=== Step 10: Run clone.sh ==="
 dialog --infobox "The expansion of the EASYROMS partition and conversion to exFAT have been completed. The system will now enter dArkOS Clone adjustment." $height $width 2>&1 > /dev/tty1 | sleep 3
 

@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
-# 注意：不使用 set -e，避免命令失败时脚本意外退出
+# Do not use set -e; a failed command could otherwise terminate the script unexpectedly.
 
 # ============================================================
-# ArkOS4Clone 开机配置脚本
-# 功能：设备检测、配置应用、OTA更新、国际化
+# ArkOS4Clone startup configuration script
+# Functions: device detection, configuration, OTA updates, and localization.
 # ============================================================
 
-# ==================== 路径配置 ====================
+# ==================== Path configuration ====================
 QUIRKS_DIR="/home/ark/.quirks"
 CONSOLE_FILE="/boot/.console"
 CONSOLE_DETECT="/usr/local/bin/console_detect"
 LOG_FILE="/boot/clone_log.txt"
 
-# ==================== 权限检查 ====================
+# ==================== Permission check ====================
 if [[ $EUID -ne 0 ]]; then
-  echo "[clone.sh] 此脚本需要 root 权限运行，请使用: sudo $0 $@"
+  echo "[clone.sh] This script requires root privileges. Run: sudo $0 $@"
   exit 1
 fi
 
-# ==================== 日志函数 ====================
-# 每次启动清空日志
+# ==================== Logging functions ====================
+# Clear the log on each run.
 : > "$LOG_FILE" 2>/dev/null || true
 msg()  { echo "[clone.sh] $*" | tee -a "$LOG_FILE"; }
 warn() { echo "[clone.sh][WARN] $*" | tee -a "$LOG_FILE" >&2; }
 err()  { echo "[clone.sh][ERR ] $*" | tee -a "$LOG_FILE" >&2; }
 
-# ==================== 设备检测 ====================
-# 设备信息变量
+# ==================== Device detection ====================
+# Device information variables.
 DEVICE_NAME=""
 SCREEN_WIDTH=640
 SCREEN_HEIGHT=480
@@ -35,7 +35,7 @@ HOTKEY_TYPE="happy5"
 SCREEN_ROTATION=0
 LED_TYPE="unsupported"
 
-# ==================== 常量设置 ====================
+# ==================== Constants ====================
 SDL2_VERSION="libSDL2-2.0.so.0.3200.10"
 SDL3_VERSION="libSDL3.so.0.4.16"
 
@@ -53,16 +53,16 @@ get_console_label() {
   tr -d '\r\n' < "$CONSOLE_FILE" 2>/dev/null || true
 }
 
-# ==================== 工具函数 ====================
+# ==================== Utility functions ====================
 cp_if_exists() {
   local src="$1" dst="$2" isfile="${3:-no}"
   [[ -e "$src" ]] || { warn "Source not found: $src"; return 1; }
   
   if [[ "$isfile" == "yes" ]]; then
     mkdir -p "$(dirname "$dst")"
-    # 先删除目标文件（如果存在），确保能正确覆盖
+    # Remove the destination first, if it exists, to ensure it is replaced correctly.
     rm -f "$dst" 2>/dev/null || true
-    # 使用 -L 解引用符号链接，确保复制实际文件
+    # Use -L to follow symlinks and copy the actual file.
     cp -L "$src" "$dst" 2>/dev/null || install -m 0755 -D "$src" "$dst"
     sudo chmod 0755 "$dst" 2>/dev/null || true
   else
@@ -74,7 +74,7 @@ cp_if_exists() {
   msg "Copied: $src -> $dst"
 }
 
-# ==================== OTA 更新 ====================
+# ==================== OTA update ====================
 maybe_apply_ota_update() {
   local tar_path=""
   # Check for update bundles in .tar.gz or legacy .tar format
@@ -84,7 +84,7 @@ maybe_apply_ota_update() {
   done
   [[ -z "$tar_path" ]] && return 0
 
-  # 检查升级包是否与当前系统匹配
+  # Check that the update package matches the current system.
   local is_darkos=false
   grep -q "dArkOS" /usr/share/plymouth/themes/text.plymouth 2>/dev/null && is_darkos=true
   
@@ -111,8 +111,8 @@ maybe_apply_ota_update() {
     echo; echo "[OTA] Package: $tar_path"; echo "[OTA] Step 1/2: Extracting... (Do NOT power off)"
   } > "$TTY"
 
-  # 注意: 不解包 chunks/ —— install.sh 会直接从 OTA_TAR_PATH 流式读取各 chunk，
-  # 省下 ~2.3G 的 p2 临时空间 (p2 出厂剩余空间有限)
+  # Do not extract chunks/: install.sh streams each chunk directly from OTA_TAR_PATH,
+  # saving about 2.3 GB of temporary space on p2 (which has limited free space).
   if ! sudo tar -xf "$tar_path" -C "$tmpdir" VERSION install.sh CHUNKS META 2>&1 | tee -a "$LOG_FILE" >> "$TTY"; then
     err "OTA extract failed"
     sudo rm -rf "$tmpdir" 2>/dev/null || true
@@ -143,12 +143,12 @@ maybe_apply_ota_update() {
   sleep 2; poweroff -f || true; exit 0
 }
 
-# ==================== 配置应用函数 ====================
+# ==================== Configuration functions ====================
 apply_hotkey_conf() {
   msg "apply_hotkey_conf: HOTKEY_TYPE=$HOTKEY_TYPE"
   local ogage_conf ra_conf="$QUIRKS_DIR/retroarch64.cfg" ra32_conf="$QUIRKS_DIR/retroarch32.cfg"
 
-  # 根据 HOTKEY_TYPE 选择 ogage 配置
+  # Select the ogage configuration based on HOTKEY_TYPE.
   case "$HOTKEY_TYPE" in
     select) 
       ogage_conf="$QUIRKS_DIR/ogage.select.conf"
@@ -164,14 +164,14 @@ apply_hotkey_conf() {
       ;;
   esac
 
-  # 复制 ogage 配置
+  # Copy the ogage configuration.
   [[ -n "$ogage_conf" ]] && cp_if_exists "$ogage_conf" "/home/ark/ogage.conf" "yes"
   
-  # 复制 RetroArch 配置
+  # Copy RetroArch configurations.
   cp_if_exists "$ra_conf" "/home/ark/.config/retroarch/retroarch.cfg" "yes" || true
   cp_if_exists "$ra32_conf" "/home/ark/.config/retroarch32/retroarch.cfg" "yes" || true
   
-  # 根据热键类型修改 input_enable_hotkey_btn
+  # Set input_enable_hotkey_btn based on the hotkey type.
   if [[ -n "$hotkey_btn" ]]; then
     msg "Setting input_enable_hotkey_btn = $hotkey_btn for HOTKEY_TYPE=$HOTKEY_TYPE"
     for cfg in /home/ark/.config/retroarch/retroarch.cfg /home/ark/.config/retroarch32/retroarch.cfg; do
@@ -200,7 +200,7 @@ apply_ppsspp_config() {
 apply_joy_conf() {
   msg "apply_joy_conf: JOYSTICK_COUNT=$JOYSTICK_COUNT"
 
-  # 根据是否存在双摇杆进行按键映射
+  # Map buttons based on whether the device has dual analog sticks.
   case "$JOYSTICK_COUNT" in
     0|1) apply_ppsspp_config "none" ;;
     2)   apply_ppsspp_config "dual" ;;
@@ -210,12 +210,12 @@ apply_joy_conf() {
 apply_input() {
   msg "apply_input: CONSOLE_FILE=$CONSOLE_FILE"
 
-  # 复制 RA ES 的默认输入 
+  # Copy the default RA ES input configuration.
   cp_if_exists "$QUIRKS_DIR/retroarch64.cfg" "/home/ark/.config/retroarch/retroarch.cfg" "yes" || true
   cp_if_exists "$QUIRKS_DIR/retroarch32.cfg" "/home/ark/.config/retroarch32/retroarch.cfg" "yes" || true
   cp_if_exists "$QUIRKS_DIR/es_input.cfg" "/etc/emulationstation/es_input.cfg" "yes" || true
 
-  # 调整布局为 OZONE
+  # Set the layout to OZONE.
   for cfg in /home/ark/.config/retroarch*/retroarch.cfg*; do
     sed -i 's/menu_driver = ".*"/menu_driver = "ozone"/' "$cfg" 2>/dev/null || true
   done
@@ -224,7 +224,7 @@ apply_input() {
 apply_es_setting() {
   msg "apply_es_setting: CONSOLE_FILE=$CONSOLE_FILE"
 
-  # 复制 RA ES 的默认输入 
+  # Copy the default RA ES input configuration.
   cp_if_exists "$QUIRKS_DIR/es_settings.cfg" "/home/ark/.emulationstation/es_settings.cfg" "yes" || true
 }
 
@@ -235,7 +235,7 @@ apply_sdl_rotation() {
   local sdl3_32="/usr/lib/arm-linux-gnueabihf/$SDL3_VERSION"
   local sdl3_64="/usr/lib/aarch64-linux-gnu/$SDL3_VERSION"
   
-  # 角度为 0 时使用 norotate 文件恢复原始库
+  # Use the norotate file to restore the original library when rotation is 0.
   if [[ "$angle" == "0" ]]; then
     msg "Restoring original SDL (no rotation)"
     local src2_32="$QUIRKS_DIR/rotate/sdl2/32/$SDL2_VERSION.norotate"
@@ -251,7 +251,7 @@ apply_sdl_rotation() {
     local ra_suffix="$angle"
   fi
   
-  # 检查源文件类型并记录
+  # Check and record the source file type.
   if [[ -L "$src2_64" ]]; then
     msg "Source (64bit) is symlink: $src2_64 -> $(readlink "$src2_64")"
   elif [[ -f "$src2_64" ]]; then
@@ -263,18 +263,18 @@ apply_sdl_rotation() {
     msg "Source (64bit) is regular file: $src3_64 ($(stat -c%s "$src3_64" 2>/dev/null || echo "unknown") bytes)"
   fi
   
-  # 删除目标位置的符号链接（如果存在）
+  # Remove the destination symlink, if present.
   rm -f "$sdl2_64" "$sdl2_32" "$sdl3_64" "$sdl3_32" 2>/dev/null || true
   
-  # 复制实际文件
+  # Copy the actual file.
   cp_if_exists "$src2_64" "$sdl2_64" "yes" || true
   cp_if_exists "$src2_32" "$sdl2_32" "yes" || true
   cp_if_exists "$src3_64" "$sdl3_64" "yes" || true
   cp_if_exists "$src3_32" "$sdl3_32" "yes" || true
   
-  # 重建符号链接（正确的链接方向）
-  # libSDL2.so -> libSDL2-2.0.so -> libSDL2-2.0.so.0 -> $SDL2_VERSION (实际文件)
-  # libSDL3.so -> libSDL3.so.0 -> $SDL3_VERSION (实际文件)
+  # Recreate symlinks with the correct link direction:
+  # libSDL2.so -> libSDL2-2.0.so -> libSDL2-2.0.so.0 -> $SDL2_VERSION (actual file)
+  # libSDL3.so -> libSDL3.so.0 -> $SDL3_VERSION (actual file)
   msg "Rebuilding SDL2 symlinks..."
   local sdl2_64_dir="${sdl2_64%/*}"
   local sdl2_32_dir="${sdl2_32%/*}"
@@ -309,22 +309,22 @@ apply_all_quirks() {
   if [[ -d "$QUIRKS_DIR" ]]; then
     msg "Quirks directory exists, contents:"
     ls -la "$QUIRKS_DIR" 2>&1 | tee -a "$LOG_FILE" || true
-    # ES RA 文件替换
+    # Replace ES RA files.
     apply_input
-    # ES 配置重置
+    # Reset ES configuration.
     apply_es_setting
-    # PPSSPP 快捷键映射
+    # Map PPSSPP hotkeys.
     apply_joy_conf
-    # RA OGAGE 快捷键映射
+    # Map RA OGAGE hotkeys.
     apply_hotkey_conf
-    # SDL2 旋转
+    # SDL2 rotation.
     apply_rotate_file
   else
     warn "QUIRKS_DIR does not exist: $QUIRKS_DIR"
   fi
 }
 
-# ==================== 音频配置 ====================
+# ==================== Audio configuration ====================
 setup_audio() {
   local state; state="$(amixer get 'Playback Path' 2>/dev/null | grep -oP "Item0: '\K\w+" || true)"
   if [[ "$state" == "OFF" || "$state" == "HP" ]]; then
@@ -335,10 +335,10 @@ setup_audio() {
   cp_if_exists "$QUIRKS_DIR/asoundrc" "/home/ark/.asoundrc" "yes" || true
 }
 
-# ==================== 国际化配置 ====================
+# ==================== Localization configuration ====================
 apply_localization() {
   local lang="$1" es_lang ra_lang ppsspp_lang timezone
-  # ES 语言 RA 语言 ppsspp语言 时区
+  # ES language, RA language, PPSSPP language, timezone.
   case "$lang" in
     cn) es_lang="zh-CN"; ra_lang="12"; scummvm_lang="zh_Hans"; ppsspp_lang="zh_CN"; timezone="Asia/Shanghai" ;;
     ko) es_lang="ko";    ra_lang="10"; scummvm_lang="ko"; ppsspp_lang="ko_KR"; timezone="Asia/Seoul" ;;
@@ -376,33 +376,33 @@ apply_localization() {
     sed -i "s/user_language = \"[^\"]*\"/user_language = \"$ra_lang\"/" "${cfg}.bak" 2>/dev/null || true
   done
 
-  # option 单独处理
+  # Handle option separately.
   sudo rm -f "/opt/system/gamelist.xml"
   [[ "$lang" == "cn" ]] && cp_if_exists "$QUIRKS_DIR/option-gamelist.xml" "/opt/system/gamelist.xml" "yes" || true
 }
 
-# ==================== 主流程 ====================
+# ==================== Main flow ====================
 main() {
-  # 在调用 console_detect 之前先记录 .console 是否存在
+  # Record whether .console exists before calling console_detect.
   local first_boot="no"
   [[ ! -f "$CONSOLE_FILE" ]] && first_boot="yes"
   
-  # 获取 boot.ini 检测的设备名（用于检测 DTB 变化）
+  # Get the device name detected by boot.ini (used to detect DTB changes).
   local bootini_device=""
   if [[ -x "$CONSOLE_DETECT" ]]; then
     bootini_device="$("$CONSOLE_DETECT" -b 2>/dev/null || true)"
   fi
   
-  # 设备检测
+  # Detect the device.
   detect_device
 
-  # OTA 检查
+  # Check for OTA updates.
   maybe_apply_ota_update
 
-  # 处理 .console 文件
+  # Handle the .console file.
   local cur_val; cur_val="$(get_console_label)"
   
-  # 检测 DTB 是否变化（boot.ini 设备与 .console 不同）
+  # Detect DTB changes (the boot.ini device differs from .console).
   local dtb_changed="no"
   if [[ -n "$bootini_device" && "$cur_val" != "$bootini_device" ]]; then
     dtb_changed="yes"
@@ -410,7 +410,7 @@ main() {
   fi
   
   if [[ "$first_boot" == "yes" ]]; then
-    # 首次启动
+    # First boot.
     printf '\033c'
     echo "==============================="; echo "   arkos for clone lcdyk  ..."; echo "==============================="
     sleep 2
@@ -419,7 +419,7 @@ main() {
     msg "First boot, device=$DEVICE_NAME"
     echo "$DEVICE_NAME" | sudo tee /etc/hostname >/dev/null
     sudo hostnamectl set-hostname "$DEVICE_NAME" || true
-    # 更新挂载点下的 /etc/hosts（不存在才添加）
+    # Update /etc/hosts in the mounted root (add it only if missing).
     if ! grep -q "127.0.1.1.*$DEVICE_NAME" "/etc/hosts" 2>/dev/null; then
         sudo sed -i "/127.0.1.1/d" "/etc/hosts"
         echo "127.0.1.1    $DEVICE_NAME" | sudo tee -a "/etc/hosts" >/dev/null
@@ -429,19 +429,19 @@ main() {
     sudo systemctl unmask systemd-journald.service systemd-journald.socket 2>/dev/null || true
     sudo systemctl enable --now systemd-journald.service systemd-journald.socket 2>/dev/null || true
     sudo systemctl daemon-reload 2>/dev/null || true
-    # 驱动加载
+    # Load drivers.
     msg "Running depmod -a"
     sudo depmod -a 2>/dev/null || true
   elif [[ "$dtb_changed" == "yes" || "$cur_val" != "$DEVICE_NAME" ]]; then
-    # 设备切换（DTB 变化或机型变化）
+    # Device changed (DTB or model changed).
     local new_device old_device
     if [[ "$dtb_changed" == "yes" ]]; then
       old_device="$cur_val"
       new_device="$bootini_device"
       msg "DTB changed: $old_device -> $new_device"
-      # 更新 .console 文件
+      # Update the .console file.
       echo "$bootini_device" | sudo tee "$CONSOLE_FILE" > /dev/null
-      # 重新检测设备信息（因为设备变了）
+      # Redetect device information because the device changed.
       if [[ -x "$CONSOLE_DETECT" ]]; then
         eval "$("$CONSOLE_DETECT" -s)"
         msg "Re-detected: $DEVICE_NAME, ${SCREEN_WIDTH}x${SCREEN_HEIGHT}, joy=$JOYSTICK_COUNT, hotkey=$HOTKEY_TYPE, rot=$SCREEN_ROTATION, led=$LED_TYPE"
@@ -454,13 +454,13 @@ main() {
     fi
     echo "$bootini_device" | sudo tee /etc/hostname >/dev/null
     sudo hostnamectl set-hostname "$bootini_device" || true
-    # 更新挂载点下的 /etc/hosts（不存在才添加）
+    # Update /etc/hosts in the mounted root (add it only if missing).
     if ! grep -q "127.0.1.1.*$bootini_device" "/etc/hosts" 2>/dev/null; then
         sudo sed -i "/127.0.1.1/d" "/etc/hosts"
         echo "127.0.1.1    $bootini_device" | sudo tee -a "/etc/hosts" >/dev/null
     fi
     sudo systemctl daemon-reload 2>/dev/null || true
-    # 驱动加载
+    # Load drivers.
     msg "Running depmod -a"
     sudo depmod -a 2>/dev/null || true
     (
@@ -476,10 +476,10 @@ main() {
     msg "Console unchanged: $cur_val"
   fi
 
-  # 音频配置
+  # Configure audio.
   setup_audio
 
-  # 国际化
+  # Apply localization.
   [[ -f "/boot/.cn" ]] && { apply_localization "cn"; sudo rm -f /boot/.cn; }
   [[ -f "/boot/.ko" ]] && { apply_localization "ko"; sudo rm -f /boot/.ko; }
 
