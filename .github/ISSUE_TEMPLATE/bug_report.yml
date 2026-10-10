@@ -8,24 +8,18 @@ body:
   - type: markdown
     attributes:
       value: |
-        ## ⚠️ Important Notice / 重要提示
+        ## ⚠️ Important Notice
 
-        **Language / 语言**: Issues must be submitted in **English** or **Chinese**. Issues in other languages will be closed immediately.
-        **语言要求**: Issues必须使用**英语**或**中文**提交，其他语言的issues将直接关闭。
+        **Language**: Issues must be submitted in **English** or **Chinese**. Issues in other languages will be closed immediately.
 
         ---
 
-        **Boot Issues Troubleshooting / 启动问题故障排除**:
+        **Boot Issues Troubleshooting**:
         - If black screen after logo: Please change SD card and rewrite the image. If problem persists, connect charger then press reset button to boot.
-        - 如果出现logo后黑屏：请更换SD卡重新写入镜像。如果问题依旧，请连接充电器后按下reset键再开机。
         - If device worked before but not now: Disconnect battery, reconnect it, then boot.
-        - 如果设备以前可以使用现在不行：请断开电池，重新连接后再开机。
         - If logo doesn't display: DTB selection is incorrect.
-        - 若logo无法显示：则为DTB选择错误。
         - If black screen after logo: Most likely insufficient battery power.
-        - 若出现logo黑屏：最大的可能是电池电量不够。
         - **DO NOT submit issues for devices that cannot boot at all.**
-        - **无法启动的问题请不要提交issues。**
 
   - type: checkboxes
     attributes:

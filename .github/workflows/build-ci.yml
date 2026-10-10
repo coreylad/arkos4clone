@@ -1,15 +1,20 @@
-name: ArkOS4Clone 构建和发布
+name: ArkOS4Clone Build and Release
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
     inputs:
       arkos_image:
-        description: '构建 ArkOS4Clone 完整镜像'
+        description: 'Build ArkOS4Clone full image'
         required: false
         type: boolean
         default: true
       darkos_image:
-        description: '构建 dArkOS4Clone 完整镜像'
+        description: 'Build dArkOS4Clone full image'
         required: false
         type: boolean
         default: false
@@ -33,8 +38,13 @@ concurrency:
 
 jobs:
   guard:
-    name: 检查构建目标并准备 Release
+    name: Check build targets and prepare release
     runs-on: ubuntu-24.04
+    env:
+      ARKOS_IMAGE: ${{ github.event_name == 'push' && 'true' || inputs.arkos_image }}
+      DARKOS_IMAGE: ${{ github.event_name == 'push' && 'false' || inputs.darkos_image }}
+      ARKOS_OTA: ${{ github.event_name == 'push' && 'false' || inputs.arkos_ota }}
+      DARKOS_OTA: ${{ github.event_name == 'push' && 'false' || inputs.darkos_ota }}
     outputs:
       build_date: ${{ steps.date.outputs.build_date }}
     steps:
@@ -43,37 +53,37 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 至少勾选一个目标
+      - name: Require at least one target
         run: |
-          if [[ "${{ inputs.arkos_image }}" != "true" \
-             && "${{ inputs.darkos_image }}" != "true" \
-             && "${{ inputs.arkos_ota }}" != "true" \
-             && "${{ inputs.darkos_ota }}" != "true" ]]; then
-            echo "::error::未勾选任何构建目标"
+          if [[ "$ARKOS_IMAGE" != "true" \
+             && "$DARKOS_IMAGE" != "true" \
+             && "$ARKOS_OTA" != "true" \
+             && "$DARKOS_OTA" != "true" ]]; then
+            echo "::error::No build target selected"
             exit 1
           fi
-          echo "构建目标: 镜像 ArkOS=${{ inputs.arkos_image }} dArkOS=${{ inputs.darkos_image }} | 升级包 ArkOS=${{ inputs.arkos_ota }} dArkOS=${{ inputs.darkos_ota }}"
+          echo "Build targets: image ArkOS=$ARKOS_IMAGE dArkOS=$DARKOS_IMAGE | OTA ArkOS=$ARKOS_OTA dArkOS=$DARKOS_OTA"
 
-      - name: 统一创建 draft Release
+      - name: Create draft release
         id: date
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BUILD_DATE=$(TZ=Asia/Shanghai date +%Y%m%d)
           echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
-          # 当天重复触发时 release 已存在，跳过创建，后续直接 --clobber 上传
+          # If the release already exists (re-run on the same day), reuse it and upload with --clobber
           if gh release view "$BUILD_DATE" >/dev/null 2>&1; then
-              echo "Release $BUILD_DATE 已存在，复用"
+              echo "Release $BUILD_DATE already exists, reusing"
           else
               gh release create "$BUILD_DATE" \
                 --title "ArkOS4Clone-$BUILD_DATE" \
-                --notes "ArkOS4Clone 构建产物 - $BUILD_DATE" \
+                --notes "ArkOS4Clone build artifacts - $BUILD_DATE" \
                 --draft=true
           fi
 
   arkos-image:
-    name: ArkOS4Clone 完整镜像
-    if: inputs.arkos_image == true
+    name: ArkOS4Clone full image
+    if: github.event_name == 'push' || inputs.arkos_image == true
     needs: guard
     runs-on: ubuntu-24.04
     steps:
@@ -105,16 +115,16 @@ jobs:
           BASE_URL="https://github.com/lcdyk0517/baidupan2release/releases/download/backup-r3xs/ArkOS_R35S-R36S_v2.0_11072025_MultiPanel.img.xz.7z"
           FILENAME=$(basename "$BASE_URL")
 
-          echo "=== 下载分卷 ==="
+          echo "=== Downloading split parts ==="
           for i in 001 002; do
             echo "Downloading part $i ..."
             wget --progress=bar:force:noscroll "${BASE_URL}.${i}" && echo "part $i done" || { echo "Failed to download part $i"; exit 1; }
           done
 
-          echo "=== 解压 7z 分卷 ==="
+          echo "=== Extracting 7z parts ==="
           7z x "${FILENAME}.001" -o. -y
 
-          echo "=== 查找并解压 xz ==="
+          echo "=== Locating and extracting xz ==="
           ls -lh *.7z* *.xz 2>/dev/null || true
           XZ_FILE=$(ls *.xz 2>/dev/null | head -1)
           if [ -z "$XZ_FILE" ]; then
@@ -124,10 +134,10 @@ jobs:
           echo "Extracting $XZ_FILE ..."
           unxz "$XZ_FILE"
 
-          echo "=== 删除中间文件，释放空间 ==="
+          echo "=== Removing intermediate files to free space ==="
           rm -f *.7z.001 *.7z.002
 
-          echo "=== 确认 img ==="
+          echo "=== Verifying img ==="
           IMG_FILE=$(ls *.img 2>/dev/null | head -1)
 
           if [ -z "$IMG_FILE" ]; then
@@ -153,23 +163,12 @@ jobs:
             echo "ERROR: No .img.xz found"
             exit 1
           fi
-          FILE_SIZE=$(stat -c%s "$XZ_FILE")
-          LIMIT=$((1900 * 1024 * 1024))
-
-          if [ "$FILE_SIZE" -gt "$LIMIT" ]; then
-            echo "文件超过1900M，7z分卷压缩..."
-            7z a -v1900m -mx=0 "${XZ_FILE}.7z" "$XZ_FILE"
-            FILES=$(ls ${XZ_FILE}.7z.* | tr '\n' ' ')
-          else
-            FILES="$XZ_FILE"
-          fi
-
-          echo "上传文件: $FILES"
-          gh release upload "$BUILD_DATE" $FILES --clobber
+          echo "Uploading: $XZ_FILE"
+          gh release upload "$BUILD_DATE" "$XZ_FILE" --clobber
 
   darkos-image:
-    name: dArkOS4Clone 完整镜像
-    if: inputs.darkos_image == true
+    name: dArkOS4Clone full image
+    if: github.event_name != 'push' && inputs.darkos_image == true
     needs: guard
     runs-on: ubuntu-24.04
     steps:
@@ -198,12 +197,12 @@ jobs:
 
       - name: Download & extract source image
         run: |
-          echo "=== 获取 dArkOS 最新 Release 信息 ==="
+          echo "=== Fetching latest dArkOS release info ==="
           RELEASE_JSON=$(curl -fsSL https://api.github.com/repos/christianhaitian/dArkOS/releases/latest)
           TAG_NAME=$(echo "$RELEASE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
-          echo "最新 Release tag: $TAG_NAME"
+          echo "Latest release tag: $TAG_NAME"
 
-          echo "=== 查找 G350 相关资源 ==="
+          echo "=== Looking for G350 assets ==="
           ASSETS=$(echo "$RELEASE_JSON" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
@@ -215,11 +214,11 @@ jobs:
           echo "$ASSETS"
 
           if [ -z "$ASSETS" ]; then
-            echo "ERROR: 未找到包含 G350 的资源"
+            echo "ERROR: No assets containing G350 found"
             exit 1
           fi
 
-          echo "=== 下载分卷 ==="
+          echo "=== Downloading split parts ==="
           for url in $ASSETS; do
             echo "Downloading $(basename "$url") ..."
             wget --progress=bar:force:noscroll "$url" || { echo "Failed to download $url"; exit 1; }
@@ -231,13 +230,13 @@ jobs:
             exit 1
           fi
 
-          echo "=== 解压 7z 分卷 ==="
+          echo "=== Extracting 7z parts ==="
           7z x "$FIRST_PART" -o. -y
 
-          echo "=== 删除中间文件，释放空间 ==="
+          echo "=== Removing intermediate files to free space ==="
           rm -f dArkOS_G350*.7z.*
 
-          echo "=== 确认 img ==="
+          echo "=== Verifying img ==="
           IMG_FILE=$(ls *.img 2>/dev/null | head -1)
           if [ -z "$IMG_FILE" ]; then
             echo "ERROR: No .img file found"
@@ -261,23 +260,12 @@ jobs:
             echo "ERROR: No .img.xz found"
             exit 1
           fi
-          FILE_SIZE=$(stat -c%s "$XZ_FILE")
-          LIMIT=$((1900 * 1024 * 1024))
-
-          if [ "$FILE_SIZE" -gt "$LIMIT" ]; then
-            echo "文件超过1900M，7z分卷压缩..."
-            7z a -v1900m -mx=0 "${XZ_FILE}.7z" "$XZ_FILE"
-            FILES=$(ls ${XZ_FILE}.7z.* | tr '\n' ' ')
-          else
-            FILES="$XZ_FILE"
-          fi
-
-          echo "上传文件: $FILES"
-          gh release upload "$BUILD_DATE" $FILES --clobber
+          echo "Uploading: $XZ_FILE"
+          gh release upload "$BUILD_DATE" "$XZ_FILE" --clobber
 
   ota-arkos:
-    name: ArkOS4Clone 升级包
-    if: inputs.arkos_ota == true
+    name: ArkOS4Clone OTA bundle
+    if: github.event_name != 'push' && inputs.arkos_ota == true
     needs: guard
     runs-on: ubuntu-24.04
     steps:
@@ -300,12 +288,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUILD_DATE: ${{ needs.guard.outputs.build_date }}
         run: |
-          [ -f update-arkos.tar ] || { echo "ERROR: update-arkos.tar 缺失"; exit 1; }
+          [ -f update-arkos.tar ] || { echo "ERROR: update-arkos.tar is missing"; exit 1; }
           gh release upload "$BUILD_DATE" update-arkos.tar firstboot.sh --clobber
 
   ota-darkos:
-    name: dArkOS4Clone 升级包
-    if: inputs.darkos_ota == true
+    name: dArkOS4Clone OTA bundle
+    if: github.event_name != 'push' && inputs.darkos_ota == true
     needs: guard
     runs-on: ubuntu-24.04
     steps:
@@ -328,5 +316,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUILD_DATE: ${{ needs.guard.outputs.build_date }}
         run: |
-          [ -f update-darkos.tar ] || { echo "ERROR: update-darkos.tar 缺失"; exit 1; }
+          [ -f update-darkos.tar ] || { echo "ERROR: update-darkos.tar is missing"; exit 1; }
           gh release upload "$BUILD_DATE" update-darkos.tar firstboot.sh --clobber
+
+  publish:
+    name: Publish release
+    if: always() && needs.guard.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    needs: [guard, arkos-image, darkos-image, ota-arkos, ota-darkos]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_DATE: ${{ needs.guard.outputs.build_date }}
+        run: gh release edit "$BUILD_DATE" --draft=false --latest
