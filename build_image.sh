@@ -82,8 +82,18 @@ download_arkos_image() (
 
   log_info "Downloading the ArkOS R35S/R36S MultiPanel source image..."
   for part in 001 002; do
+    local expected_sha256 actual_sha256
+    case "$part" in
+      001) expected_sha256="76dda3708348d837c37e458cfe798d746de700f1ab9327af2989170d8792acc2" ;;
+      002) expected_sha256="fb7e962f5685d9ae46be9807ee317d6bc27a43f71fc321161501519a20ae1661" ;;
+    esac
     if ! wget "${wget_opts[@]}" -O "$staging/source.7z.$part" "${base_url}.$part"; then
       log_error "ArkOS source download failed (part $part)"
+      exit 1
+    fi
+    actual_sha256="$(sha256sum "$staging/source.7z.$part" | cut -d' ' -f1)"
+    if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+      log_error "ArkOS source checksum mismatch (part $part)"
       exit 1
     fi
   done
