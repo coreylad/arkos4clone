@@ -3,6 +3,7 @@ set -euo pipefail
 
 # ArkOS4Clone one-click build script
 # Usage: sudo ./build_image.sh <image-path> [working-directory]
+#        sudo ./build_image.sh --download [working-directory] [--ci]
 # The working directory stores the image copy and temporary files. An ext4 filesystem is recommended for best performance.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Timestamp format (matches scripts/clone_support.sh)
 BUILD_DATE="$(TZ=Asia/Shanghai date +%Y%m%d)"
 OUTPUT_NAME="ArkOS4Clone-${BUILD_DATE}"
+ARKOS_SOURCE_NAME="ArkOS_R35S-R36S_v2.0_11072025_MultiPanel.img"
 
 # Colored output
 RED='\033[0;31m'
@@ -53,6 +55,64 @@ check_tools() {
   done
   log_ok "All required tools are available"
 }
+
+download_arkos_image() (
+  local cache_dir="$1"
+  local image="$cache_dir/$ARKOS_SOURCE_NAME"
+  local base_url="https://github.com/lcdyk0517/baidupan2release/releases/download/backup-r3xs/${ARKOS_SOURCE_NAME}.xz.7z"
+  local t part staging
+  local wget_opts=()
+  read -r -a wget_opts <<< "$WGET_OPTS"
+
+  if [[ -s "$image" ]]; then
+    log_ok "Using cached source image: $image"
+    return 0
+  fi
+
+  for t in wget 7z; do
+    if ! command -v "$t" >/dev/null 2>&1; then
+      log_error "Required download tool is missing: $t"
+      exit 1
+    fi
+  done
+
+  mkdir -p "$cache_dir"
+  staging=$(mktemp -d "$cache_dir/.download.XXXXXX")
+  trap 'rm -rf -- "$staging"' EXIT
+
+  log_info "Downloading the ArkOS R35S/R36S MultiPanel source image..."
+  for part in 001 002; do
+    local expected_sha256 actual_sha256
+    case "$part" in
+      001) expected_sha256="76dda3708348d837c37e458cfe798d746de700f1ab9327af2989170d8792acc2" ;;
+      002) expected_sha256="fb7e962f5685d9ae46be9807ee317d6bc27a43f71fc321161501519a20ae1661" ;;
+    esac
+    if ! wget "${wget_opts[@]}" -O "$staging/source.7z.$part" "${base_url}.$part"; then
+      log_error "ArkOS source download failed (part $part)"
+      exit 1
+    fi
+    actual_sha256="$(sha256sum "$staging/source.7z.$part" | cut -d' ' -f1)"
+    if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+      log_error "ArkOS source checksum mismatch (part $part)"
+      exit 1
+    fi
+  done
+
+  # Stream only the expected member, never archive paths, into the staging directory.
+  log_info "Extracting the ArkOS source image..."
+  if ! 7z e -so "$staging/source.7z.001" "${ARKOS_SOURCE_NAME}.xz" > "$staging/source.img.xz" \
+      || [[ ! -s "$staging/source.img.xz" ]]; then
+    log_error "ArkOS source archive extraction failed"
+    exit 1
+  fi
+  if ! xz -dc "$staging/source.img.xz" > "$staging/source.img" \
+      || [[ ! -s "$staging/source.img" ]]; then
+    log_error "ArkOS source xz decompression failed"
+    exit 1
+  fi
+  mv -- "$staging/source.img" "$image"
+  log_ok "Source image downloaded: $image"
+)
 
 check_uboot_files() {
   local uboot_dir="$SCRIPT_DIR/uboot"
@@ -606,12 +666,16 @@ ArkOS4Clone one-click build script
 
 Usage:
   sudo ./build_image.sh <source-image-path> [working-directory] [--ci]
+  sudo ./build_image.sh --download [working-directory] [--ci]
 
 Arguments:
-  source-image-path  Required; path to the original ArkOS image
+  source-image-path  Path to the original ArkOS or dArkOS image (unless --download)
+  --download         Download and extract the ArkOS R35S/R36S MultiPanel source
+                     used by the release workflow, then build the modified image
   working-directory  Optional; directory for the image copy and temporary files
                      An ext4 filesystem is recommended for best performance
-                     Default: directory containing the source image
+                     Default: directory containing the source image, or the
+                     script directory with --download
   --ci               Optional; quiet mode to reduce download progress and other logs
 
 Environment variables:
@@ -619,6 +683,12 @@ Environment variables:
   ARKOS_WORK_DIR  Temporary working directory (default: <working-directory>)
 
 Examples:
+  # Download ArkOS and build ArkOS4Clone in one command
+  sudo ./build_image.sh --download
+
+  # Download and build in a dedicated working directory
+  sudo ./build_image.sh --download /home/lcdyk/arkos --ci
+
   # Use the default working directory (the source image directory)
   sudo ./build_image.sh /path/to/ArkOS-*.img
 
@@ -641,44 +711,65 @@ Output:
 
 Notes:
   - The source image is not modified.
+  - --download needs wget and 7z (Ubuntu packages: wget, p7zip-full).
+  - Downloaded sources are cached in <working-directory>/source-images.
+    Delete the cached .img to force a new download; temporary archives are removed.
   - Use an ext4 working directory instead of a WSL /mnt path for best performance.
 
 USAGE
 }
 
 main() {
-  # Check for root privileges first.
-  if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-    log_error "Please run this script with sudo"
-    exit 1
-  fi
+  local download=0 ci=0 arg
+  local positional=()
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) show_usage; return 0 ;;
+      --download) download=1 ;;
+      --ci) ci=1 ;;
+      -*) log_error "Unknown option: $arg"; return 1 ;;
+      *) positional+=("$arg") ;;
+    esac
+  done
 
-  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    show_usage
-    exit 0
-  fi
-
-  if [[ $# -lt 1 ]]; then
-    log_error "Missing required argument: image path"
+  if (( (download == 0 && (${#positional[@]} < 1 || ${#positional[@]} > 2)) \
+      || (download == 1 && ${#positional[@]} > 1) )); then
+    log_error "Provide an image path and optional working directory, or --download and optional working directory"
     echo ""
     show_usage
     exit 1
   fi
 
-  local source_image="$1"
+  need_root
+  local source_image=""
   
   # Determine the working directory.
   local work_dir
-  if [[ $# -ge 2 ]]; then
-    work_dir="$2"
+  if (( download )); then
+    work_dir="${positional[0]:-$SCRIPT_DIR}"
   else
-    # Default to the directory containing the source image.
-    work_dir="$(cd "$(dirname "$source_image")" && pwd)"
+    source_image="${positional[0]}"
+    check_image "$source_image"
+    work_dir="${positional[1]:-$(cd "$(dirname "$source_image")" && pwd)}"
   fi
-  
+
   # Convert to an absolute path.
   if [[ "$work_dir" != /* ]]; then
     work_dir="$(pwd)/$work_dir"
+  fi
+
+  if (( ci )); then
+    WGET_OPTS="-q"
+    export ARKOS_QUIET=1
+  else
+    WGET_OPTS="-q --show-progress"
+  fi
+
+  check_tools
+  check_work_dir "$work_dir"
+  if (( download )); then
+    download_arkos_image "$work_dir/source-images"
+    source_image="$work_dir/source-images/$ARKOS_SOURCE_NAME"
   fi
 
   # Set environment variables.
@@ -686,14 +777,6 @@ main() {
   ARKOS_WORK_DIR="${ARKOS_WORK_DIR:-${work_dir}}"
   ARKOS_IMAGE_NAME="$(basename "$source_image")"
   export ARKOS_MNT ARKOS_WORK_DIR ARKOS_IMAGE_NAME
-
-  # Third argument --ci enables quiet mode to reduce CI log output.
-  if [[ "${3:-}" == "--ci" ]]; then
-    WGET_OPTS="-q"
-    export ARKOS_QUIET=1
-  else
-    WGET_OPTS="-q --show-progress"
-  fi
 
   # Select the output prefix based on the source image name.
   local output_prefix
@@ -719,7 +802,6 @@ main() {
   echo ""
 
   # Prerequisite checks (do not require root).
-  check_tools
   check_jdk_file
   check_portmaster
   check_pm_libs
@@ -728,7 +810,6 @@ main() {
 
   # Checks that require root.
   check_image "$source_image"
-  check_work_dir "$work_dir"
   check_uboot_files
 
   # Step 1: Copy the image.
