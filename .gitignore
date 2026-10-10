@@ -2,8 +2,11 @@
 PortMaster/*
 /*.txt
 update.tar
+update.tar.gz
 update-arkos.tar
+update-arkos.tar.gz
 update-darkos.tar
+update-darkos.tar.gz
 /*.gz
 bin/pm_libs/*
 /*.img.xz

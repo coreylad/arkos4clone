@@ -77,8 +77,8 @@ cp_if_exists() {
 # ==================== OTA 更新 ====================
 maybe_apply_ota_update() {
   local tar_path=""
-  # 检查 update-arkos.tar 或 update-darkos.tar
-  for name in update-arkos.tar update-darkos.tar; do
+  # Check for update bundles in .tar.gz or legacy .tar format
+  for name in update-arkos.tar.gz update-darkos.tar.gz update-arkos.tar update-darkos.tar; do
     [[ -f "/roms/$name" ]] && tar_path="/roms/$name" && break
     [[ -f "/roms2/$name" ]] && tar_path="/roms2/$name" && break
   done
@@ -89,11 +89,11 @@ maybe_apply_ota_update() {
   grep -q "dArkOS" /usr/share/plymouth/themes/text.plymouth 2>/dev/null && is_darkos=true
   
   if [[ "$is_darkos" == "true" && "$tar_path" != *darkos* ]]; then
-    err "Mismatch: current=dArkOS, package=ArkOS. Use update-darkos.tar"
+    err "Mismatch: current=dArkOS, package=ArkOS. Use update-darkos.tar.gz"
     return 0
   fi
   if [[ "$is_darkos" == "false" && "$tar_path" == *darkos* ]]; then
-    err "Mismatch: current=ArkOS, package=dArkOS. Use update-arkos.tar"
+    err "Mismatch: current=ArkOS, package=dArkOS. Use update-arkos.tar.gz"
     return 0
   fi
 

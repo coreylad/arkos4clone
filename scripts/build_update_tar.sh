@@ -2,19 +2,20 @@
 set -euo pipefail
 
 # ============================================
-# ArkOS4Clone OTA 升级包制作脚本
+# ArkOS4Clone OTA package builder
 #
-# 用法：
-#   sudo ./build_update_tar.sh           # 构建 ArkOS 版本 (update-arkos.tar)
-#   sudo ./build_update_tar.sh -d        # 构建 dArkOS 版本 (update-darkos.tar)
-#   sudo ./build_update_tar.sh darkos    # 构建 dArkOS 版本
+# Usage:
+#   sudo ./build_update_tar.sh           # Build ArkOS bundle (update-arkos.tar.gz)
+#   sudo ./build_update_tar.sh -d        # Build dArkOS bundle (update-darkos.tar.gz)
+#   sudo ./build_update_tar.sh darkos    # Build dArkOS bundle
 #
-# payload 直接由仓库的 boot/ 与 rootfs/ 目录树生成：
+# Payload is generated directly from the repo's boot/ and rootfs/ trees:
 #   dArkOS: boot/dArkOS + rootfs/dArkOS          (777 / 1000:1000)
-#   ArkOS : 先 dArkOS 再 ArkOS 分层覆盖           (777 / 1002:1002)
+#   ArkOS : dArkOS first, then ArkOS overlay      (777 / 1002:1002)
 #
-# 输出文件：
-#   ./update-arkos.tar / ./update-darkos.tar （放到设备 /roms/update.tar）
+# Output file:
+#   ./update-arkos.tar.gz / ./update-darkos.tar.gz
+#   Copy the bundle to the console as /roms/update.tar.gz (or /roms/update.tar for legacy compatibility)
 # ============================================
 
 # 解析命令行参数
@@ -27,7 +28,7 @@ for arg in "$@"; do
   esac
 done
 
-# 生成版本信息
+# Generate version metadata
 UPDATE_DATE="$(TZ=Asia/Shanghai date +%Y%m%d)"
 MODDER="kk&lcdyk"
 
@@ -82,12 +83,12 @@ if [[ "$ARKOS_IMAGE_NAME" == *dArkOS* ]]; then
   # ============================================================
   # dArkOS (UID=1000)
   # ============================================================
-  echo "=== 构建 dArkOS OTA 包 (777 / 1000:1000) ==="
+  echo "=== Building dArkOS OTA bundle (777 / 1000:1000) ==="
   VERSION="dArkOS4Clone-${UPDATE_DATE}-${MODDER}"
   CHOWN_USER="1000:1000"
-  OUT_TAR="${WORKDIR}/update-darkos.tar"
+  OUT_TAR="${WORKDIR}/update-darkos.tar.gz"
 
-  echo "== 构建 payload/boot (sync boot/dArkOS) =="
+  echo "== Building payload/boot (sync boot/dArkOS) =="
   rsync $RSYNC_BOOT_OPTS boot/dArkOS/ "$PAYLOAD_BOOT/"
   cp -f boot/dArkOS/clone.sh "$PAYLOAD_BOOT/firstboot.sh"
   touch "$PAYLOAD_BOOT/USE_DTB_SELECT_TO_SELECT_DEVICE" 2>/dev/null || true
@@ -105,14 +106,14 @@ if [[ "$ARKOS_IMAGE_NAME" == *dArkOS* ]]; then
 
 else
   # ============================================================
-  # ArkOS (UID=1002)：先 dArkOS 后 ArkOS 分层覆盖
+  # ArkOS (UID=1002): dArkOS first, then ArkOS overlay
   # ============================================================
-  echo "=== 构建 ArkOS OTA 包 (777 / 1002:1002) ==="
+  echo "=== Building ArkOS OTA bundle (777 / 1002:1002) ==="
   VERSION="ArkOS4Clone-${UPDATE_DATE}-${MODDER}"
   CHOWN_USER="1002:1002"
-  OUT_TAR="${WORKDIR}/update-arkos.tar"
+  OUT_TAR="${WORKDIR}/update-arkos.tar.gz"
 
-  echo "== 构建 payload/boot (sync boot/dArkOS + boot/ArkOS) =="
+  echo "== Building payload/boot (sync boot/dArkOS + boot/ArkOS) =="
   rsync $RSYNC_BOOT_OPTS boot/dArkOS/ "$PAYLOAD_BOOT/"
   rsync $RSYNC_BOOT_OPTS boot/ArkOS/ "$PAYLOAD_BOOT/"
   cp -f boot/dArkOS/clone.sh "$PAYLOAD_BOOT/firstboot.sh"
@@ -484,15 +485,15 @@ root chunks/40_root_misc.tar
 EOF
 
 # -----------------------------
-# 打包 update.tar
+# Create single console install bundle (.tar.gz)
 # -----------------------------
-echo "== 打包 update.tar =="
+echo "== Creating console install bundle (.tar.gz) =="
 rm -f "$OUT_TAR" 2>/dev/null || true
-tar --numeric-owner --owner=0 --group=0 -C "$STAGE" -cf "$OUT_TAR" \
+tar --numeric-owner --owner=0 --group=0 -C "$STAGE" -czf "$OUT_TAR" \
   VERSION install.sh META CHUNKS chunks uboot
 
 rm -rf "$STAGE"
 
-echo "== 完成 =="
-echo "版本号: $VERSION"
-echo "输出文件: $OUT_TAR"
+echo "== Complete =="
+echo "Version: $VERSION"
+echo "Output file: $OUT_TAR"
