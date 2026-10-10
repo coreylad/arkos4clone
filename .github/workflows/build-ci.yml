@@ -14,12 +14,12 @@ on:
         type: boolean
         default: false
       arkos_ota:
-        description: '构建 ArkOS4Clone 升级包 (update-arkos.tar)'
+        description: 'Build ArkOS4Clone console OTA bundle (update-arkos.tar.gz)'
         required: false
         type: boolean
         default: true
       darkos_ota:
-        description: '构建 dArkOS4Clone 升级包 (update-darkos.tar)'
+        description: 'Build dArkOS4Clone console OTA bundle (update-darkos.tar.gz)'
         required: false
         type: boolean
         default: false
